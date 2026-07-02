@@ -1,0 +1,102 @@
+{
+  "name": "cursor-costtrack",
+  "displayName": "Cursor Cost Tracker",
+  "description": "Per-project AI spend tracking for Cursor — see exactly what each repo is costing you",
+  "version": "0.1.0",
+  "publisher": "cursor-costtrack",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "keywords": ["cursor", "ai", "cost", "tracking", "tokens", "billing"],
+  "icon": "media/icon.png",
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "costtrack",
+          "title": "Cost Tracker",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "costtrack": [
+        {
+          "type": "webview",
+          "id": "costtrack.dashboard",
+          "name": "AI Spend by Project"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "costtrack.refresh",
+        "title": "Refresh Cost Data",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "costtrack.prevMonth",
+        "title": "Previous Month",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "costtrack.nextMonth",
+        "title": "Next Month",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "costtrack.disconnect",
+        "title": "Cursor Cost Tracker: Disconnect Account"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "costtrack.prevMonth",
+          "when": "view == costtrack.dashboard",
+          "group": "navigation@1"
+        },
+        {
+          "command": "costtrack.nextMonth",
+          "when": "view == costtrack.dashboard",
+          "group": "navigation@2"
+        },
+        {
+          "command": "costtrack.refresh",
+          "when": "view == costtrack.dashboard",
+          "group": "navigation@3"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Cursor Cost Tracker",
+      "properties": {
+        "costtrack.refreshIntervalSeconds": {
+          "type": "number",
+          "default": 60,
+          "description": "How often to refresh usage data (seconds)"
+        },
+        "costtrack.showEstimateWarning": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show disclaimer that costs are estimates"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run bundle",
+    "bundle": "node esbuild.js",
+    "compile": "tsc -p ./ --noEmit && node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.21.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {}
+}

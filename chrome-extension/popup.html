@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cursor Cost Tracker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      background: #0f1117;
+      color: #e2e8f0;
+      width: 300px;
+      padding: 16px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .logo { font-size: 20px; }
+    .title { font-weight: 600; font-size: 14px; color: #f1f5f9; }
+    .subtitle { font-size: 11px; color: #64748b; }
+
+    /* ── Status card ── */
+    .status-card {
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .status-card.connected       { background: #052e16; border: 1px solid #166534; }
+    .status-card.listener-offline{ background: #1c1c1c; border: 1px solid #334155; }
+    .status-card.not-logged-in   { background: #1c1c1c; border: 1px solid #334155; }
+    .status-card.loading         { background: #1c1c1c; border: 1px solid #334155; }
+
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .connected        .status-dot { background: #22c55e; }
+    .listener-offline .status-dot { background: #64748b; }
+    .not-logged-in    .status-dot { background: #64748b; }
+    .loading          .status-dot { background: #64748b; animation: pulse 1s infinite; }
+
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    .status-text { flex: 1; }
+    .status-label { font-weight: 600; font-size: 12px; margin-bottom: 2px; }
+    .connected .status-label { color: #4ade80; }
+    .listener-offline .status-label,
+    .not-logged-in .status-label { color: #94a3b8; }
+    .status-detail { font-size: 11px; color: #64748b; }
+
+    /* ── Instructions ── */
+    .instructions {
+      background: #1e293b;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+    }
+
+    .instructions-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
+
+    .step {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 12px;
+      color: #cbd5e1;
+    }
+
+    .step-num {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #334155;
+      color: #94a3b8;
+      font-size: 10px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    code {
+      background: #0f172a;
+      color: #7dd3fc;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-family: "SF Mono", Menlo, monospace;
+    }
+
+    /* ── Sync button ── */
+    .sync-btn {
+      width: 100%;
+      padding: 8px;
+      border: none;
+      border-radius: 6px;
+      background: #1d4ed8;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .sync-btn:hover { background: #2563eb; }
+    .sync-btn:active { background: #1e40af; }
+    .sync-btn:disabled { background: #334155; color: #64748b; cursor: default; }
+
+    .last-sync { text-align: center; font-size: 10px; color: #475569; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">💰</div>
+    <div>
+      <div class="title">Cursor Cost Tracker</div>
+      <div class="subtitle">Per-project AI spend</div>
+    </div>
+  </div>
+
+  <div id="status-card" class="status-card loading">
+    <div class="status-dot"></div>
+    <div class="status-text">
+      <div class="status-label" id="status-label">Checking…</div>
+      <div class="status-detail" id="status-detail"></div>
+    </div>
+  </div>
+
+  <div id="instructions" class="instructions" style="display:none">
+    <div class="instructions-title" id="instructions-title">Connect</div>
+    <div id="instructions-body"></div>
+  </div>
+
+  <button class="sync-btn" id="sync-btn">Sync Now</button>
+  <div class="last-sync" id="last-sync"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

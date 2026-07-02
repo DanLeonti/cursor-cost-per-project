@@ -1,0 +1,5 @@
+extension/node_modules/
+extension/out/
+*.pyc
+__pycache__/
+.DS_Store

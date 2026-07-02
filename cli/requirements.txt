@@ -1,0 +1,1 @@
+# No external dependencies — only Python stdlib (sqlite3, json, pathlib, datetime)
