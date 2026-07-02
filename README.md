@@ -41,6 +41,7 @@ This walks you through copying your session token directly from browser DevTools
 ```bash
 python3 cli/costtrack.py                     # current month
 python3 cli/costtrack.py --month 2026-06     # specific month
+python3 cli/costtrack.py --by-branch         # break each project down by git branch
 python3 cli/costtrack.py --listen            # connect via Chrome extension (recommended)
 python3 cli/costtrack.py --setup             # connect by pasting token manually
 python3 cli/costtrack.py --logout            # disconnect / remove saved token
@@ -66,6 +67,25 @@ Sample output:
 
   ✅ Exact billing data from your Cursor account.
 ```
+
+## Branch breakdown
+
+If most of your work lands in one big repo, add `--by-branch` to see which git branch (feature/ticket) within that repo is driving the cost:
+
+```bash
+python3 cli/costtrack.py --by-branch
+```
+
+```
+  PROJECT                        COST  CONVS  MODELS                              SHARE
+  ─────────────────────────────────────────────────────────────────────────────────────
+  PROJECT A                        $450.00 23  Opus 4 88%, Sonnet 4.6 12%         ██████░░ 75%
+        ├──  feature/fraud-scoring $210.00 12  Opus 4 94%, GPT-5.5 6%             ████░░░░ 47%
+        ├──  main                  $140.00  8  Opus 4 81%, Sonnet 4.6 19%         ███░░░░░ 31%
+        └──  bugfix/api-timeout     $60.00  3  Opus 4 100%                        ██░░░░░░ 13%
+```
+
+Branch attribution uses git-branch metadata Cursor already tracks per conversation (`trackedGitRepos[].branches[]`) — no extra setup or developer convention required. If a conversation touched multiple branches, it's attributed to whichever branch was interacted with most recently. Works with both exact and estimate mode, and with `--post-slack`.
 
 ## Chrome extension (optional)
 

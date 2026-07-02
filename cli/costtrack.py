@@ -8,6 +8,7 @@ and (optionally) calls Cursor's usage API for exact billing data.
 Usage:
     python3 costtrack.py                     Show current month (estimate or exact)
     python3 costtrack.py --month 2026-05     Show a specific month
+    python3 costtrack.py --by-branch         Break each project down by git branch
     python3 costtrack.py --listen            Auto-connect via the Chrome extension (recommended)
     python3 costtrack.py --setup             Connect manually by pasting your token
     python3 costtrack.py --logout            Disconnect / remove saved token
@@ -454,13 +455,23 @@ def get_month_composers(db_path: Path, year: int, month: int) -> list[dict]:
             repos = c.get("trackedGitRepos", [])
             if repos:
                 project = repos[0].get("repoPath", "")
+                branches = repos[0].get("branches", [])
+                # A conversation can touch multiple branches (if you switch mid-chat) —
+                # attribute it to whichever branch was interacted with most recently.
+                branch = (
+                    max(branches, key=lambda b: b.get("lastInteractionAt", 0)).get("branchName", "no-branch")
+                    if branches else "no-branch"
+                )
             else:
                 ws = c.get("workspaceIdentifier", {})
                 project = ws.get("uri", {}).get("fsPath", "no-workspace")
+                branch = "no-branch"
 
             result.append({
                 "composerId": c.get("composerId", ""),
                 "project": project.rstrip(),
+                "branch": branch,
+                "is_worktree": bool(c.get("isWorktree", False)),
                 "name": c.get("name", ""),
                 "createdAt": c.get("createdAt", 0),
                 "lastUpdatedAt": updated,
@@ -580,18 +591,18 @@ def fetch_usage_events(token: str, year: int, month: int) -> list[dict]:
     return events
 
 
-def find_project_for_timestamp(ts_ms: int, composers: list[dict]) -> str:
-    """Attribute a billing event to a project by matching its timestamp against
-    each conversation's active window [createdAt, lastUpdatedAt]."""
+def find_composer_for_timestamp(ts_ms: int, composers: list[dict]) -> Optional[dict]:
+    """Find the conversation most likely to have generated a billing event at ts_ms,
+    by matching its timestamp against each conversation's active window
+    [createdAt, lastUpdatedAt]. Returns None if no conversation matches."""
     candidates = [
         c for c in composers
         if c["createdAt"] <= ts_ms <= c["lastUpdatedAt"] + 5_000
     ]
     if not candidates:
-        return "unattributed"
+        return None
 
-    best = min(candidates, key=lambda c: c["lastUpdatedAt"] - c["createdAt"])
-    return normalize_project_name(best["project"])
+    return min(candidates, key=lambda c: c["lastUpdatedAt"] - c["createdAt"])
 
 
 def build_exact_project_stats(events: list[dict], composers: list[dict]) -> dict[str, ProjectStats]:
@@ -602,7 +613,9 @@ def build_exact_project_stats(events: list[dict], composers: list[dict]) -> dict
     projects: dict[str, ProjectStats] = {}
 
     for ev in events:
-        name = find_project_for_timestamp(ev["timestamp"], composers)
+        composer = find_composer_for_timestamp(ev["timestamp"], composers)
+        name = normalize_project_name(composer["project"]) if composer else "unattributed"
+
         if name not in projects:
             projects[name] = ProjectStats(name=name, conversations=conv_counts.get(name, 0))
 
@@ -618,6 +631,43 @@ def build_exact_project_stats(events: list[dict], composers: list[dict]) -> dict
             projects[name] = ProjectStats(name=name, conversations=count)
 
     return projects
+
+
+def build_exact_branch_stats(events: list[dict], composers: list[dict]) -> dict[str, dict[str, ProjectStats]]:
+    """Same attribution as build_exact_project_stats, but nested one level
+    deeper: {project_name: {branch_name: ProjectStats}}."""
+    conv_counts: dict[tuple[str, str], int] = defaultdict(int)
+    for c in composers:
+        key = (normalize_project_name(c["project"]), c.get("branch", "no-branch"))
+        conv_counts[key] += 1
+
+    branches: dict[str, dict[str, ProjectStats]] = defaultdict(dict)
+
+    def get_stats(project_name: str, branch: str) -> ProjectStats:
+        bucket = branches[project_name]
+        if branch not in bucket:
+            bucket[branch] = ProjectStats(name=branch, conversations=conv_counts.get((project_name, branch), 0))
+        return bucket[branch]
+
+    for ev in events:
+        composer = find_composer_for_timestamp(ev["timestamp"], composers)
+        if composer is None:
+            project_name, branch = "unattributed", "no-branch"
+        else:
+            project_name = normalize_project_name(composer["project"])
+            branch = composer.get("branch", "no-branch")
+
+        stats = get_stats(project_name, branch)
+        stats.hash_count += 1
+        stats.models[ev["model"]] = stats.models.get(ev["model"], 0) + 1
+        stats.estimated_input_tokens += ev["input_tokens"]
+        stats.estimated_output_tokens += ev["output_tokens"]
+        stats.estimated_cost_usd += ev["charged_cents"] / 100
+
+    for project_name, branch in conv_counts:
+        get_stats(project_name, branch)
+
+    return branches
 
 
 # ── Estimate mode (no token) ────────────────────────────────────────────────
@@ -656,6 +706,38 @@ def build_estimated_project_stats(
             stats.estimated_cost_usd += estimate_cost(model, output_tokens)
 
     return projects
+
+
+def build_estimated_branch_stats(
+    composers: list[dict],
+    hashes_by_conv: dict[str, list[dict]],
+) -> dict[str, dict[str, ProjectStats]]:
+    """Same as build_estimated_project_stats, but nested one level deeper:
+    {project_name: {branch_name: ProjectStats}}."""
+    branches: dict[str, dict[str, ProjectStats]] = defaultdict(dict)
+
+    for c in composers:
+        project_name = normalize_project_name(c["project"])
+        branch = c.get("branch", "no-branch")
+        bucket = branches[project_name]
+        if branch not in bucket:
+            bucket[branch] = ProjectStats(name=branch)
+
+        stats = bucket[branch]
+        stats.conversations += 1
+
+        for entry in hashes_by_conv.get(c["composerId"], []):
+            model = entry["model"] or "default"
+            count = entry["count"]
+            stats.hash_count += count
+            stats.models[model] = stats.models.get(model, 0) + count
+
+            output_tokens = count * OUTPUT_TOKENS_PER_HASH
+            stats.estimated_output_tokens += output_tokens
+            stats.estimated_input_tokens += int(output_tokens * INPUT_OUTPUT_RATIO)
+            stats.estimated_cost_usd += estimate_cost(model, output_tokens)
+
+    return branches
 
 
 # ── Rendering ────────────────────────────────────────────────────────────────
@@ -727,9 +809,19 @@ def model_summary(models: dict, width: int) -> str:
     return result[:width]
 
 
-def build_table_lines(stats: dict[str, ProjectStats], is_exact: bool) -> list[str]:
+BRANCH_MID  = "      ├──  "   # non-last branch under a project
+BRANCH_LAST = "      └──  "   # last branch under a project
+
+
+def build_table_lines(
+    stats: dict[str, ProjectStats],
+    is_exact: bool,
+    branch_stats: Optional[dict[str, dict[str, ProjectStats]]] = None,
+) -> list[str]:
     """Build the project cost table as plain-text lines (no leading indent),
-    shared by both the terminal printer and the Slack formatter."""
+    shared by both the terminal printer and the Slack formatter. If
+    branch_stats is given, each project row is followed by indented
+    tree-style sub-rows breaking that project's cost down by git branch."""
     sorted_projects = sorted(stats.values(), key=lambda s: s.estimated_cost_usd, reverse=True)
     total_cost = sum(s.estimated_cost_usd for s in sorted_projects)
     total_convs = sum(s.conversations for s in sorted_projects)
@@ -738,19 +830,34 @@ def build_table_lines(stats: dict[str, ProjectStats], is_exact: bool) -> list[st
     header = f"{'PROJECT':<{name_w}}  {'COST':>{cost_w}}  {'CONVS':>{convs_w}}  {'MODELS':<{models_w}}  SHARE"
     divider = "─" * len(header)
 
+    def render_row(name: str, s: ProjectStats, share_base: float) -> str:
+        share = s.estimated_cost_usd / share_base if share_base > 0 else 0
+        name_str = name[:name_w]
+        models_str = model_summary(s.models, models_w)
+        cost_str = f"${s.estimated_cost_usd:.2f}" if is_exact else f"~${s.estimated_cost_usd:.2f}"
+        return (
+            f"{name_str:<{name_w}}  {cost_str:>{cost_w}}  {s.conversations:>{convs_w}}  "
+            f"{models_str:<{models_w}}  {bar(share)} {share*100:.0f}%"
+        )
+
     lines = [divider, header, divider]
 
     for s in sorted_projects:
         if s.estimated_cost_usd == 0 and s.conversations == 0:
             continue
-        share = s.estimated_cost_usd / total_cost if total_cost > 0 else 0
-        name = s.name[:name_w]
-        models_str = model_summary(s.models, models_w)
-        cost_str = f"${s.estimated_cost_usd:.2f}" if is_exact else f"~${s.estimated_cost_usd:.2f}"
-        lines.append(
-            f"{name:<{name_w}}  {cost_str:>{cost_w}}  {s.conversations:>{convs_w}}  "
-            f"{models_str:<{models_w}}  {bar(share)} {share*100:.0f}%"
-        )
+        lines.append(render_row(s.name, s, total_cost))
+
+        if branch_stats:
+            branches = branch_stats.get(s.name, {})
+            sorted_branches = [
+                b for b in sorted(branches.values(), key=lambda b: b.estimated_cost_usd, reverse=True)
+                if not (b.estimated_cost_usd == 0 and b.conversations == 0)
+            ]
+            # Branch share is relative to its own project's cost — "how much
+            # of this project's spend" the branch accounts for.
+            for i, b in enumerate(sorted_branches):
+                prefix = BRANCH_LAST if i == len(sorted_branches) - 1 else BRANCH_MID
+                lines.append(render_row(f"{prefix}{b.name}", b, s.estimated_cost_usd))
 
     lines.append(divider)
     total_str = f"${total_cost:.2f}" if is_exact else f"~${total_cost:.2f}"
@@ -759,10 +866,15 @@ def build_table_lines(stats: dict[str, ProjectStats], is_exact: bool) -> list[st
     return lines
 
 
-def print_dashboard(stats: dict[str, ProjectStats], month_label: str, is_exact: bool) -> None:
+def print_dashboard(
+    stats: dict[str, ProjectStats],
+    month_label: str,
+    is_exact: bool,
+    branch_stats: Optional[dict[str, dict[str, ProjectStats]]] = None,
+) -> None:
     print()
     print(f"  Cursor Cost Tracker — {month_label}")
-    for line in build_table_lines(stats, is_exact):
+    for line in build_table_lines(stats, is_exact, branch_stats):
         print(f"  {line}")
     print()
 
@@ -774,8 +886,13 @@ def print_dashboard(stats: dict[str, ProjectStats], month_label: str, is_exact: 
     print()
 
 
-def format_dashboard_for_slack(stats: dict[str, ProjectStats], month_label: str, is_exact: bool) -> str:
-    table = "\n".join(build_table_lines(stats, is_exact))
+def format_dashboard_for_slack(
+    stats: dict[str, ProjectStats],
+    month_label: str,
+    is_exact: bool,
+    branch_stats: Optional[dict[str, dict[str, ProjectStats]]] = None,
+) -> str:
+    table = "\n".join(build_table_lines(stats, is_exact, branch_stats))
     footer = (
         "✅ _Exact billing data from your Cursor account._"
         if is_exact
@@ -861,8 +978,12 @@ def main() -> None:
         print(f"No conversations found for {month_label}.")
         sys.exit(0)
 
+    by_branch = "--by-branch" in args
+
     stats: Optional[dict] = None
+    branch_stats: Optional[dict] = None
     is_exact = False
+    events: Optional[list] = None
 
     if token:
         try:
@@ -876,7 +997,10 @@ def main() -> None:
         except Exception as e:
             print(f"  ⚠  Could not fetch exact billing ({e}). Falling back to estimates.\n")
 
-    if stats is None:
+    if stats is not None and is_exact:
+        if by_branch:
+            branch_stats = build_exact_branch_stats(events, composers)
+    else:
         if not tracking_db.exists():
             print(f"Warning: AI tracking database not found at {tracking_db}")
             print("Cost estimates will be based on conversation count only.")
@@ -886,13 +1010,15 @@ def main() -> None:
             hashes_by_conv = get_code_hashes_by_conversation(tracking_db, month_start_ms)
 
         stats = build_estimated_project_stats(composers, hashes_by_conv)
+        if by_branch:
+            branch_stats = build_estimated_branch_stats(composers, hashes_by_conv)
 
     if "--post-slack" in args:
         webhook = load_slack_webhook()
         if not webhook:
             print("  ⚠  No Slack webhook configured. Run `costtrack.py --slack-setup` first.")
             sys.exit(1)
-        message = format_dashboard_for_slack(stats, month_label, is_exact)
+        message = format_dashboard_for_slack(stats, month_label, is_exact, branch_stats)
         try:
             post_to_slack(webhook, message)
             mark_posted_today()
@@ -901,7 +1027,7 @@ def main() -> None:
             print(f"  ⚠  {e}")
             sys.exit(1)
     else:
-        print_dashboard(stats, month_label, is_exact)
+        print_dashboard(stats, month_label, is_exact, branch_stats)
 
 
 if __name__ == "__main__":
