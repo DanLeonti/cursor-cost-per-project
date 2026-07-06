@@ -42,6 +42,7 @@ This walks you through copying your session token directly from browser DevTools
 python3 cli/costtrack.py                     # current month
 python3 cli/costtrack.py --month 2026-06     # specific month
 python3 cli/costtrack.py --by-branch         # break each project down by git branch
+python3 cli/costtrack.py --by-tab            # break each project down by conversation ("tab")
 python3 cli/costtrack.py --listen            # connect via Chrome extension (recommended)
 python3 cli/costtrack.py --setup             # connect by pasting token manually
 python3 cli/costtrack.py --logout            # disconnect / remove saved token
@@ -86,6 +87,25 @@ python3 cli/costtrack.py --by-branch
 ```
 
 Branch attribution uses git-branch metadata Cursor already tracks per conversation (`trackedGitRepos[].branches[]`) — no extra setup or developer convention required. If a conversation touched multiple branches, it's attributed to whichever branch was interacted with most recently. Works with both exact and estimate mode, and with `--post-slack`.
+
+## Tab breakdown
+
+Prefer to see the cost of each individual conversation ("tab") instead of branches? Use `--by-tab`:
+
+```bash
+python3 cli/costtrack.py --by-tab
+```
+
+```
+  PROJECT                                  COST  CONVS  MODELS                    SHARE
+  ─────────────────────────────────────────────────────────────────────────────────────
+  General                               $150.17      7  Opus 4 52% +3             ██████░░ 75%
+        ├──  Scam addresses with unk    $115.03      1  Opus 4 69% +2             ██████░░ 77%
+        ├──  GCP cluster for Centaur     $20.70      1  Sonnet 5 65%, Opus 4 35%  █░░░░░░░ 14%
+        └──  Manual score overrides       $4.50      1  Sonnet 5 75%, Opus 4 25%  ░░░░░░░░ 3%
+```
+
+This uses each conversation's title (its `name` field in Cursor's local database), which is what you called that chat, or what Cursor auto-generated for it. Conversations without a title yet are shown as `(untitled <id>)`. `--by-tab` and `--by-branch` can't be combined — if both are passed, `--by-tab` wins.
 
 ## Chrome extension (optional)
 
